@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.util.Log;
 import android.util.Size;
 import android.view.TextureView;
 import android.widget.Toast;
@@ -28,6 +29,7 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     protected abstract int getContentViewLayoutId();
 
     protected abstract TextureView getCameraPreviewTextureView();
+    private static final String TAG = "CameraActivity";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
