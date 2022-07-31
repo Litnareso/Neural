@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import org.pytorch.Device;
 import org.pytorch.IValue;
 import org.pytorch.LiteModuleLoader;
 import org.pytorch.Module;
@@ -120,14 +121,13 @@ public class MainActivity extends AppCompatActivity implements Runnable {
         setContentView(R.layout.activity_main);
         if (model_enhancer == null) {
             try {
-                model_enhancer = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), "model.ptl"));
+                model_enhancer = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), "compressed_model_lite_v.ptl"), null, Device.CPU);
             } catch (IOException e) {
             }
         }
         if (buf == null) {
             try {
                 buf = BitmapFactory.decodeStream(getAssets().open(mImagename));
-
             } catch (IOException e) {
 
             }

@@ -69,7 +69,7 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
         final TextureView textureView = getCameraPreviewTextureView();
         final PreviewConfig previewConfig = new PreviewConfig.Builder().build();
         final Preview preview = new Preview(previewConfig);
-        preview.setOnPreviewOutputUpdateListener(output -> textureView.setSurfaceTexture(output.getSurfaceTexture()));
+        //preview.setOnPreviewOutputUpdateListener(output -> textureView.setSurfaceTexture(output.getSurfaceTexture()));
 
         final ImageAnalysisConfig imageAnalysisConfig =
                 new ImageAnalysisConfig.Builder()

@@ -1,7 +1,7 @@
 package org.pytorch.LSDnet;
 
 import static android.graphics.Color.rgb;
-
+import org.pytorch.PyTorchAndroid;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
@@ -31,7 +31,7 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
 import java.util.Comparator;
-
+import org.pytorch.Device;
 
 public class LiveVideoClassificationActivity extends AbstractCameraXActivity<LiveVideoClassificationActivity.AnalysisResult> {
     private Module mModule = null;
@@ -159,9 +159,9 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
 
         if (mModule == null) {
             try {
-                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(getApplicationContext(), "model.ptl"));
-            } catch (IOException e) {
-            }
+                PyTorchAndroid.setNumThreads(4);
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(getApplicationContext(), "compressed_model_lite_v.ptl"),null, Device.CPU);
+            } catch (IOException e) {}
         }
 
 //        if (mFrameCount == 0)
@@ -209,22 +209,10 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
 //        String tops[] = new String[Constants.TOP_COUNT];
 //
 //        final String result = String.join(", ", tops);
-
-
-
-
-
-
-
-
-
-
-
-
-        bitmap = Bitmap.createScaledBitmap(bitmap, (int)(256), (int)(256), true);
+        bitmap = Bitmap.createScaledBitmap(bitmap, (int)(128), (int)(128), true);
         final long startTime = SystemClock.elapsedRealtime();
         bitmap = Model_forward(bitmap);
-        final Bitmap transferredBitmap = Bitmap.createScaledBitmap(bitmap, 1024, 1024, true);
+        final Bitmap transferredBitmap = Bitmap.createScaledBitmap(bitmap, 512, 512, true);
         final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
 //        runOnUiThread(new Runnable() {
 //            @Override
@@ -234,8 +222,6 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
 //                mTextView.setText(str_1);
 //            }
 //        });
-
-
         return new AnalysisResult(transferredBitmap, inferenceTime);
     }
 }
