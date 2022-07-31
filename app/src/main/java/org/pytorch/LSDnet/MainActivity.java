@@ -31,6 +31,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
+import java.util.List;
 
 
 public class MainActivity extends AppCompatActivity implements Runnable {
@@ -97,10 +99,21 @@ public class MainActivity extends AppCompatActivity implements Runnable {
     private MediaMetadataRetriever mmr = null;
     private Module model_enhancer = null;
     private int state = 0;
-
+    List<String> model_names = Arrays.asList("model.ptl", "compressed_model_lite.ptl", "compressed_model_lite_v.ptl");
+    int model_idx = 0;
+    int model_idx_used = 0;
     Bitmap Model_forward(Bitmap buf) {
         final Tensor inputTensor = TensorImageUtils.bitmapToFloat32Tensor(buf,
                 TensorImageUtils.TORCHVISION_NORM_MEAN_RGB, TensorImageUtils.TORCHVISION_NORM_STD_RGB);
+        if (model_idx != model_idx_used) {
+            model_enhancer.destroy();
+            try {
+                model_enhancer = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), model_names.get(model_idx)), null, Device.CPU);
+            } catch (IOException e) {
+
+            }
+            model_idx_used = model_idx;
+        }
         final float[] outimgTensor = model_enhancer.forward(IValue.from(inputTensor)).toTensor().getDataAsFloatArray();
         Bitmap tmp = floatArrayToBitmap(outimgTensor, buf.getWidth(),buf.getHeight());
         return tmp;
@@ -153,6 +166,18 @@ public class MainActivity extends AppCompatActivity implements Runnable {
                 startActivity(intent);
             }
         });
+
+        final ImageButton buttonswitch = findViewById(R.id.nextbutton);
+
+        buttonswitch.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                //final Intent intent = new Intent(MainActivity.this, LiveVideoClassificationActivity.class);
+                //startActivity(intent);
+                model_idx += 1;
+                model_idx = model_idx %  model_names.size();
+            }
+        });
+
     }
 
     @Override

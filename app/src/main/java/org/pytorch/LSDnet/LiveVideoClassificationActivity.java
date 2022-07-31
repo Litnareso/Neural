@@ -35,6 +35,8 @@ import org.pytorch.Device;
 
 public class LiveVideoClassificationActivity extends AbstractCameraXActivity<LiveVideoClassificationActivity.AnalysisResult> {
     private Module mModule = null;
+    int model_idx = 0;
+
     private ImageView mResultView;
     private TextView mFPSView;
     private int mFrameCount = 0;
@@ -50,6 +52,7 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
             this.inferenceTime = inferenceTime;
         }
     }
+
 
     @Override
     protected int getContentViewLayoutId() {
@@ -81,7 +84,6 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     }
 
     private Bitmap floatArrayToBitmap(float [] floatArray, int width, int height) {
-
         // Create empty bitmap in ARGB format
         Bitmap bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         int[] pixels = new int[width * height * 4];
