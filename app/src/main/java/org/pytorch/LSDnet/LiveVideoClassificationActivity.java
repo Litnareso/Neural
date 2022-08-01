@@ -11,7 +11,9 @@ import android.graphics.YuvImage;
 import android.media.Image;
 import android.os.SystemClock;
 import android.view.TextureView;
+import android.view.View;
 import android.view.ViewStub;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -31,16 +33,20 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.List;
+
 import org.pytorch.Device;
 
 public class LiveVideoClassificationActivity extends AbstractCameraXActivity<LiveVideoClassificationActivity.AnalysisResult> {
     private Module mModule = null;
     int model_idx = 0;
-
+    int model_idx_used = 0;
+    List<String> model_names = Arrays.asList("model.ptl");
     private ImageView mResultView;
     private TextView mFPSView;
     private int mFrameCount = 0;
     private FloatBuffer inTensorBuffer;
+
 
 
     static class AnalysisResult {
@@ -147,23 +153,35 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     @WorkerThread
     @Nullable
     protected AnalysisResult analyzeImage(ImageProxy image, int rotationDegrees) {
-//        if (mModule == null) {
-//            try {
-//                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), "video_classification.ptl"));
-//            } catch (IOException e) {
-//                return null;
-//            }
-//        }
-
-
-
-
-
         if (mModule == null) {
             try {
-                PyTorchAndroid.setNumThreads(4);
-                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(getApplicationContext(), "compressed_model_lite_v.ptl"),null, Device.CPU);
-            } catch (IOException e) {}
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), "model.ptl"));
+            } catch (IOException e) {
+                return null;
+            }
+        }
+
+
+        final ImageButton buttonswitch = findViewById(R.id.nextbutton);
+
+        buttonswitch.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                //final Intent intent = new Intent(MainActivity.this, LiveVideoClassificationActivity.class);
+                //startActivity(intent);
+                model_idx += 1;
+                model_idx = model_idx %  model_names.size();
+            }
+        });
+
+
+        if (model_idx != model_idx_used) {
+            mModule.destroy();
+            try {
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), model_names.get(model_idx)), null, Device.CPU);
+            } catch (IOException e) {
+
+            }
+            model_idx_used = model_idx;
         }
 
 //        if (mFrameCount == 0)

@@ -97,24 +97,24 @@ public class MainActivity extends AppCompatActivity implements Runnable {
     private Bitmap buf;
     Uri mVideoUri;
     private MediaMetadataRetriever mmr = null;
-    private Module model_enhancer = null;
+    private Module mModule = null;
     private int state = 0;
-    List<String> model_names = Arrays.asList("model.ptl", "compressed_model_lite.ptl", "compressed_model_lite_v.ptl");
+    List<String> model_names = Arrays.asList("model.ptl");
     int model_idx = 0;
     int model_idx_used = 0;
     Bitmap Model_forward(Bitmap buf) {
         final Tensor inputTensor = TensorImageUtils.bitmapToFloat32Tensor(buf,
                 TensorImageUtils.TORCHVISION_NORM_MEAN_RGB, TensorImageUtils.TORCHVISION_NORM_STD_RGB);
         if (model_idx != model_idx_used) {
-            model_enhancer.destroy();
+            mModule.destroy();
             try {
-                model_enhancer = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), model_names.get(model_idx)), null, Device.CPU);
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), model_names.get(model_idx)), null, Device.CPU);
             } catch (IOException e) {
 
             }
             model_idx_used = model_idx;
         }
-        final float[] outimgTensor = model_enhancer.forward(IValue.from(inputTensor)).toTensor().getDataAsFloatArray();
+        final float[] outimgTensor = mModule.forward(IValue.from(inputTensor)).toTensor().getDataAsFloatArray();
         Bitmap tmp = floatArrayToBitmap(outimgTensor, buf.getWidth(),buf.getHeight());
         return tmp;
     }
@@ -132,9 +132,9 @@ public class MainActivity extends AppCompatActivity implements Runnable {
         }
 
         setContentView(R.layout.activity_main);
-        if (model_enhancer == null) {
+        if (mModule == null) {
             try {
-                model_enhancer = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), "compressed_model_lite_v.ptl"), null, Device.CPU);
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), "model.ptl"), null, Device.CPU);
             } catch (IOException e) {
             }
         }
