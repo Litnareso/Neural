@@ -1,15 +1,14 @@
 package org.pytorch.LSDnet;
 
 import static android.graphics.Color.rgb;
-import org.pytorch.PyTorchAndroid;
+
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.ImageFormat;
 import android.graphics.Matrix;
-import android.graphics.Rect;
-import android.graphics.YuvImage;
-import android.media.Image;
+import android.os.Bundle;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewStub;
@@ -20,6 +19,7 @@ import android.widget.TextView;
 import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 import androidx.camera.core.ImageProxy;
+import androidx.core.app.ActivityCompat;
 
 import org.pytorch.IValue;
 import org.pytorch.LiteModuleLoader;
@@ -27,18 +27,16 @@ import org.pytorch.Module;
 import org.pytorch.Tensor;
 import org.pytorch.torchvision.TensorImageUtils;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import org.pytorch.Device;
 
 public class LiveVideoClassificationActivity extends AbstractCameraXActivity<LiveVideoClassificationActivity.AnalysisResult> {
-    private Module mModule = null;
+    private volatile Module mModule = null;
     int model_idx = 0;
     int model_idx_used = 0;
     List<String> model_names = Arrays.asList("model.ptl");
@@ -63,6 +61,30 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     @Override
     protected int getContentViewLayoutId() {
         return R.layout.activity_live_video_classification;
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        if (mModule == null) {
+            try {
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), model_names.get(0)));
+            } catch (IOException e) {
+                Log.e("Object Detection", "Error on loading model", e);
+            }
+        }
+
+        final ImageButton buttonswitch = findViewById(R.id.nextbutton);
+
+        buttonswitch.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                //final Intent intent = new Intent(MainActivity.this, LiveVideoClassificationActivity.class);
+                //startActivity(intent);
+                model_idx += 1;
+                model_idx = model_idx %  model_names.size();
+            }
+        });
     }
 
     @Override
@@ -125,55 +147,9 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
         return tmp;
     }
 
-    private Bitmap imgToBitmap(Image image) {
-        Image.Plane[] planes = image.getPlanes();
-        ByteBuffer yBuffer = planes[0].getBuffer();
-        ByteBuffer uBuffer = planes[1].getBuffer();
-        ByteBuffer vBuffer = planes[2].getBuffer();
-
-        int ySize = yBuffer.remaining();
-        int uSize = uBuffer.remaining();
-        int vSize = vBuffer.remaining();
-
-        byte[] nv21 = new byte[ySize + uSize + vSize];
-        yBuffer.get(nv21, 0, ySize);
-        vBuffer.get(nv21, ySize, vSize);
-        uBuffer.get(nv21, ySize + vSize, uSize);
-
-        YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 75, out);
-
-        byte[] imageBytes = out.toByteArray();
-        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
-    }
-
-
     @Override
     @WorkerThread
-    @Nullable
-    protected AnalysisResult analyzeImage(ImageProxy image, int rotationDegrees) {
-        if (mModule == null) {
-            try {
-                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), "model.ptl"));
-            } catch (IOException e) {
-                return null;
-            }
-        }
-
-
-        final ImageButton buttonswitch = findViewById(R.id.nextbutton);
-
-        buttonswitch.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                //final Intent intent = new Intent(MainActivity.this, LiveVideoClassificationActivity.class);
-                //startActivity(intent);
-                model_idx += 1;
-                model_idx = model_idx %  model_names.size();
-            }
-        });
-
-
+    protected void analyzeImage() {
         if (model_idx != model_idx_used) {
             mModule.destroy();
             try {
@@ -187,7 +163,12 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
 //        if (mFrameCount == 0)
 //            inTensorBuffer = Tensor.allocateFloatBuffer(Constants.MODEL_INPUT_SIZE);
 
-        Bitmap bitmap = imgToBitmap(image.getImage());
+        Bitmap bitmap = null;
+        try {
+            bitmap = inputImageQueue.take().bitmap;
+        } catch (InterruptedException e) {
+            Log.e("Object Detection", "Error on retrieving input image from queue", e);
+        }
         Matrix matrix = new Matrix();
         matrix.postRotate(90.0f);
         bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
@@ -242,6 +223,8 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
 //                mTextView.setText(str_1);
 //            }
 //        });
-        return new AnalysisResult(transferredBitmap, inferenceTime);
+
+        outputImageQueue.offer(new AnalysisResult(transferredBitmap, inferenceTime));
+        return;
     }
 }

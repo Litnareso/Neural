@@ -2,6 +2,12 @@
 package org.pytorch.LSDnet;
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.ImageFormat;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
+import android.media.Image;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
@@ -15,16 +21,40 @@ import androidx.annotation.WorkerThread;
 import androidx.camera.core.CameraX;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageAnalysisConfig;
-import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
 import androidx.camera.core.PreviewConfig;
 import androidx.core.app.ActivityCompat;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.util.concurrent.LinkedBlockingQueue;
 
 public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     private static final int REQUEST_CODE_CAMERA_PERMISSION = 200;
     private static final String[] PERMISSIONS = {Manifest.permission.CAMERA};
 
+    private static long INPUT_MIN_DELAY = 40;
+    private static long OUTPUT_MIN_DELAY = 30;
+    private static final int INPUT_QUEUE_SIZE = 4;
+    private static final int OUTPUT_QUEUE_SIZE = 4;
+
     private long mLastAnalysisResultTime;
+
+    static class InputImageData {
+        protected final Bitmap bitmap;
+        private final int rotationDegrees;
+
+        InputImageData(Bitmap bitmap, int rotationDegrees) {
+            this.bitmap = bitmap;
+            this.rotationDegrees = rotationDegrees;
+        }
+    }
+
+    protected LinkedBlockingQueue<InputImageData> inputImageQueue;
+    protected LinkedBlockingQueue<R> outputImageQueue;
+    private Bitmap buffer = null;
 
     protected abstract int getContentViewLayoutId();
 
@@ -35,6 +65,9 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(getContentViewLayoutId());
+
+        inputImageQueue = new LinkedBlockingQueue<InputImageData>(INPUT_QUEUE_SIZE);
+        outputImageQueue = new LinkedBlockingQueue<R>(OUTPUT_QUEUE_SIZE);
 
         startBackgroundThread();
 
@@ -47,6 +80,12 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
         } else {
             setupCameraX();
         }
+    }
+
+    @Override
+    protected void onPostCreate(Bundle savedInstanceState) {
+        super.onPostCreate(savedInstanceState);
+        mProcessingThreadPool.execute(mAnalazeImage);
     }
 
     @Override
@@ -79,11 +118,24 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
                         .build();
         final ImageAnalysis imageAnalysis = new ImageAnalysis(imageAnalysisConfig);
         imageAnalysis.setAnalyzer((image, rotationDegrees) -> {
-            if (SystemClock.elapsedRealtime() - mLastAnalysisResultTime < 500) {
+            if (SystemClock.elapsedRealtime() - mLastAnalysisResultTime < INPUT_MIN_DELAY) {
                 return;
             }
+            if (inputImageQueue.size() < INPUT_QUEUE_SIZE) {
+                inputImageQueue.offer(new InputImageData(imgToBitmap(image.getImage()), rotationDegrees));
+            }
 
-            final R result = analyzeImage(image, rotationDegrees);
+            if (SystemClock.elapsedRealtime() - mLastAnalysisResultTime < OUTPUT_MIN_DELAY) {
+                return;
+            }
+//            try {
+//                final R result = outputImageQueue.take();
+//                mLastAnalysisResultTime = SystemClock.elapsedRealtime();
+//                runOnUiThread(() -> applyToUiAnalyzeImageResult(result));
+//            } catch (InterruptedException e) {
+//                Log.e("Object Detection", "Error on retrieving output image from queue", e);
+//            }
+            final R result = outputImageQueue.poll();
             if (result != null) {
                 mLastAnalysisResultTime = SystemClock.elapsedRealtime();
                 runOnUiThread(() -> applyToUiAnalyzeImageResult(result));
@@ -93,9 +145,40 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
         CameraX.bindToLifecycle(this, preview, imageAnalysis);
     }
 
+    protected Bitmap imgToBitmap(Image image) {
+        Image.Plane[] planes = image.getPlanes();
+        ByteBuffer yBuffer = planes[0].getBuffer();
+        ByteBuffer uBuffer = planes[1].getBuffer();
+        ByteBuffer vBuffer = planes[2].getBuffer();
+
+        int ySize = yBuffer.remaining();
+        int uSize = uBuffer.remaining();
+        int vSize = vBuffer.remaining();
+
+        byte[] nv21 = new byte[ySize + uSize + vSize];
+        yBuffer.get(nv21, 0, ySize);
+        vBuffer.get(nv21, ySize, vSize);
+        uBuffer.get(nv21, ySize + vSize, uSize);
+
+        YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 75, out);
+
+        byte[] imageBytes = out.toByteArray();
+        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+    }
+
+    private Runnable mAnalazeImage = new Runnable() {
+        @Override
+        public void run() {
+            while (true) {
+                analyzeImage();
+            }
+        }
+    };
+
     @WorkerThread
-    @Nullable
-    protected abstract R analyzeImage(ImageProxy image, int rotationDegrees);
+    protected abstract void analyzeImage();
 
     @UiThread
     protected abstract void applyToUiAnalyzeImageResult(R result);

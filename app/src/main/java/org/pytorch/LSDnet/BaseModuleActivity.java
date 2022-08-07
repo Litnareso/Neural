@@ -9,7 +9,12 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
 public class BaseModuleActivity extends AppCompatActivity {
+    protected ExecutorService mProcessingThreadPool;
     protected HandlerThread mBackgroundThread;
     protected Handler mBackgroundHandler;
     protected Handler mUIHandler;
@@ -23,6 +28,7 @@ public class BaseModuleActivity extends AppCompatActivity {
     @Override
     protected void onPostCreate(@Nullable Bundle savedInstanceState) {
         super.onPostCreate(savedInstanceState);
+        mProcessingThreadPool = Executors.newSingleThreadExecutor();
         startBackgroundThread();
     }
 
@@ -35,6 +41,7 @@ public class BaseModuleActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         stopBackgroundThread();
+        stopProcessingThreadPool();
         super.onDestroy();
     }
 
@@ -46,6 +53,21 @@ public class BaseModuleActivity extends AppCompatActivity {
             mBackgroundHandler = null;
         } catch (InterruptedException e) {
             Log.e("Object Detection", "Error on stopping background thread", e);
+        }
+    }
+
+    protected void stopProcessingThreadPool() {
+        mProcessingThreadPool.shutdown();
+        try {
+            if (!mProcessingThreadPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                mProcessingThreadPool.shutdownNow();
+                if (!mProcessingThreadPool.awaitTermination(5, TimeUnit.SECONDS))
+                    Log.e("Object Detection", "Processing ThreadPool did not terminate");
+            }
+        } catch (InterruptedException e) {
+            Log.e("Object Detection", "Processing ThreadPool did not terminate", e);
+            mProcessingThreadPool.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 }
