@@ -30,13 +30,15 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     private static final int REQUEST_CODE_CAMERA_PERMISSION = 200;
     private static final String[] PERMISSIONS = {Manifest.permission.CAMERA};
 
-    private static long INPUT_MIN_DELAY = 40;
-    private static long OUTPUT_MIN_DELAY = 30;
+    private static long INPUT_MIN_DELAY = 50;
+    private static long OUTPUT_MIN_DELAY = 40;
+    private static long START_DELAY = 100;
     private static final int INPUT_QUEUE_SIZE = 4;
     private static final int OUTPUT_QUEUE_SIZE = 4;
 
@@ -86,6 +88,7 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     protected void onPostCreate(Bundle savedInstanceState) {
         super.onPostCreate(savedInstanceState);
         mProcessingThreadPool.execute(mAnalazeImage);
+        mDisplayThreadPool.schedule(mDisplayImage, START_DELAY, TimeUnit.MILLISECONDS);
     }
 
     @Override
@@ -123,22 +126,7 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
             }
             if (inputImageQueue.size() < INPUT_QUEUE_SIZE) {
                 inputImageQueue.offer(new InputImageData(imgToBitmap(image.getImage()), rotationDegrees));
-            }
-
-            if (SystemClock.elapsedRealtime() - mLastAnalysisResultTime < OUTPUT_MIN_DELAY) {
-                return;
-            }
-//            try {
-//                final R result = outputImageQueue.take();
-//                mLastAnalysisResultTime = SystemClock.elapsedRealtime();
-//                runOnUiThread(() -> applyToUiAnalyzeImageResult(result));
-//            } catch (InterruptedException e) {
-//                Log.e("Object Detection", "Error on retrieving output image from queue", e);
-//            }
-            final R result = outputImageQueue.poll();
-            if (result != null) {
                 mLastAnalysisResultTime = SystemClock.elapsedRealtime();
-                runOnUiThread(() -> applyToUiAnalyzeImageResult(result));
             }
         });
 
@@ -173,6 +161,19 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
         public void run() {
             while (true) {
                 analyzeImage();
+            }
+        }
+    };
+
+    private Runnable mDisplayImage = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                final R result = outputImageQueue.take();
+                runOnUiThread(() -> applyToUiAnalyzeImageResult(result));
+                mDisplayThreadPool.schedule(mDisplayImage, OUTPUT_MIN_DELAY, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Log.e("Object Detection", "Error on retrieving output image from queue", e);
             }
         }
     };

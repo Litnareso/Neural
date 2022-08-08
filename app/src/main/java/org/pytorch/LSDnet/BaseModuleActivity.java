@@ -11,10 +11,12 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public class BaseModuleActivity extends AppCompatActivity {
     protected ExecutorService mProcessingThreadPool;
+    protected ScheduledExecutorService mDisplayThreadPool;
     protected HandlerThread mBackgroundThread;
     protected Handler mBackgroundHandler;
     protected Handler mUIHandler;
@@ -29,6 +31,7 @@ public class BaseModuleActivity extends AppCompatActivity {
     protected void onPostCreate(@Nullable Bundle savedInstanceState) {
         super.onPostCreate(savedInstanceState);
         mProcessingThreadPool = Executors.newSingleThreadExecutor();
+        mDisplayThreadPool = Executors.newSingleThreadScheduledExecutor();
         startBackgroundThread();
     }
 
@@ -42,6 +45,7 @@ public class BaseModuleActivity extends AppCompatActivity {
     protected void onDestroy() {
         stopBackgroundThread();
         stopProcessingThreadPool();
+        stopDisplayingThreadPool();
         super.onDestroy();
     }
 
@@ -67,6 +71,21 @@ public class BaseModuleActivity extends AppCompatActivity {
         } catch (InterruptedException e) {
             Log.e("Object Detection", "Processing ThreadPool did not terminate", e);
             mProcessingThreadPool.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    protected void stopDisplayingThreadPool() {
+        mDisplayThreadPool.shutdown();
+        try {
+            if (!mDisplayThreadPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                mDisplayThreadPool.shutdownNow();
+                if (!mDisplayThreadPool.awaitTermination(5, TimeUnit.SECONDS))
+                    Log.e("Object Detection", "Display ThreadPool did not terminate");
+            }
+        } catch (InterruptedException e) {
+            Log.e("Object Detection", "Display ThreadPool did not terminate", e);
+            mDisplayThreadPool.shutdownNow();
             Thread.currentThread().interrupt();
         }
     }
