@@ -15,7 +15,6 @@ import android.util.Size;
 import android.view.TextureView;
 import android.widget.Toast;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.UiThread;
 import androidx.annotation.WorkerThread;
 import androidx.camera.core.CameraX;
@@ -26,8 +25,6 @@ import androidx.camera.core.PreviewConfig;
 import androidx.core.app.ActivityCompat;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -36,11 +33,11 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     private static final int REQUEST_CODE_CAMERA_PERMISSION = 200;
     private static final String[] PERMISSIONS = {Manifest.permission.CAMERA};
 
-    private static long INPUT_MIN_DELAY = 50;
-    private static long OUTPUT_MIN_DELAY = 40;
-    private static long START_DELAY = 100;
+    protected static long INPUT_MIN_DELAY = 50;
+    protected static long DISPLAY_MIN_DELAY = 40;
+    protected static long START_DELAY = 50;
     private static final int INPUT_QUEUE_SIZE = 4;
-    private static final int OUTPUT_QUEUE_SIZE = 4;
+    private static final int DISPLAY_QUEUE_SIZE = 7;
 
     private long mLastAnalysisResultTime;
 
@@ -69,7 +66,7 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
         setContentView(getContentViewLayoutId());
 
         inputImageQueue = new LinkedBlockingQueue<InputImageData>(INPUT_QUEUE_SIZE);
-        outputImageQueue = new LinkedBlockingQueue<R>(OUTPUT_QUEUE_SIZE);
+        outputImageQueue = new LinkedBlockingQueue<R>(DISPLAY_QUEUE_SIZE);
 
         startBackgroundThread();
 
@@ -171,7 +168,7 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
             try {
                 final R result = outputImageQueue.take();
                 runOnUiThread(() -> applyToUiAnalyzeImageResult(result));
-                mDisplayThreadPool.schedule(mDisplayImage, OUTPUT_MIN_DELAY, TimeUnit.MILLISECONDS);
+                mDisplayThreadPool.schedule(mDisplayImage, DISPLAY_MIN_DELAY, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Log.e("Object Detection", "Error on retrieving output image from queue", e);
             }
