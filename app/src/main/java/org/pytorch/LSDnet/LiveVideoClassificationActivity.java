@@ -2,10 +2,13 @@ package org.pytorch.LSDnet;
 
 import static android.graphics.Color.rgb;
 
-import android.Manifest;
-import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.ImageFormat;
 import android.graphics.Matrix;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
+import android.media.Image;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
@@ -16,10 +19,8 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 import androidx.camera.core.ImageProxy;
-import androidx.core.app.ActivityCompat;
 
 import org.pytorch.IValue;
 import org.pytorch.LiteModuleLoader;
@@ -27,25 +28,57 @@ import org.pytorch.Module;
 import org.pytorch.Tensor;
 import org.pytorch.torchvision.TensorImageUtils;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.pytorch.Device;
 
 public class LiveVideoClassificationActivity extends AbstractCameraXActivity<LiveVideoClassificationActivity.AnalysisResult> {
     private volatile Module mModule = null;
-    int model_idx = 0;
-    int model_idx_used = 0;
-    List<String> model_names = Arrays.asList("model.ptl");
+    volatile int model_idx = 0;
+    volatile int model_idx_used = -1;
+    List<ProcessingModel> models = Arrays.asList(
+            new ProcessingModel("model.ptl", 1, 128, 128, 50, 40),
+            new ProcessingModel("model_1.ptl", 1, 128, 128, 40, 30),
+            new ProcessingModel("model_3.ptl", 3, 128, 128, 25, 25)
+    );
     private ImageView mResultView;
     private TextView mFPSView;
-    private int mFrameCount = 0;
+    private final AtomicInteger mFrameCount = new AtomicInteger();
     private FloatBuffer inTensorBuffer;
 
+    private long mLastAnalysisResultTime = 0;
 
+    static class ProcessingModel {
+        private final String fileName;
+        private final int framesPerInterference;
+        private final int resolutionWidth;
+        private final int resolutionHeight;
+        private final long inputDelay;
+        private final long displayDelay;
+
+        ProcessingModel(String fileName, int framesPerInterference, int resolutionWidth, int resolutionHeight, long inputDelay, long displayDelay) {
+            this.fileName = fileName;
+            this.framesPerInterference = framesPerInterference;
+            this.resolutionWidth = resolutionWidth;
+            this.resolutionHeight = resolutionHeight;
+            this.inputDelay = inputDelay;
+            this.displayDelay = displayDelay;
+        }
+
+        public int getFrameSize() {
+            return resolutionHeight * resolutionWidth * Constants.CHANNEL_NUM;
+        }
+
+        public int getInputSize() {
+            return getFrameSize() * framesPerInterference;
+        }
+    }
 
     static class AnalysisResult {
         private final Bitmap bitmap;
@@ -57,6 +90,28 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
         }
     }
 
+    protected Bitmap imgToBitmap(Image image) {
+        Image.Plane[] planes = image.getPlanes();
+        ByteBuffer yBuffer = planes[0].getBuffer();
+        ByteBuffer uBuffer = planes[1].getBuffer();
+        ByteBuffer vBuffer = planes[2].getBuffer();
+
+        int ySize = yBuffer.remaining();
+        int uSize = uBuffer.remaining();
+        int vSize = vBuffer.remaining();
+
+        byte[] nv21 = new byte[ySize + uSize + vSize];
+        yBuffer.get(nv21, 0, ySize);
+        vBuffer.get(nv21, ySize, vSize);
+        uBuffer.get(nv21, ySize + vSize, uSize);
+
+        YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 75, out);
+
+        byte[] imageBytes = out.toByteArray();
+        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
+    }
 
     @Override
     protected int getContentViewLayoutId() {
@@ -69,7 +124,7 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
 
         if (mModule == null) {
             try {
-                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), model_names.get(0)));
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), models.get(0).fileName));
             } catch (IOException e) {
                 Log.e("Object Detection", "Error on loading model", e);
             }
@@ -81,8 +136,7 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
             public void onClick(View v) {
                 //final Intent intent = new Intent(MainActivity.this, LiveVideoClassificationActivity.class);
                 //startActivity(intent);
-                model_idx += 1;
-                model_idx = model_idx %  model_names.size();
+                model_idx = (model_idx + 1) % models.size();
             }
         });
     }
@@ -111,10 +165,10 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
 //        mResultView.invalidate();
     }
 
-    private Bitmap floatArrayToBitmap(float [] floatArray, int width, int height) {
+    private Bitmap floatArrayToBitmap(float[] floatArray, int width, int height) {
         // Create empty bitmap in ARGB format
         Bitmap bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        int[] pixels = new int[width * height * 4];
+        int[] pixels = new int[width * height];
 
         // mapping smallest value to 0 and largest value to 255
         float maxValue = -1;
@@ -124,16 +178,29 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
             minValue = Math.min(floatArray[i], minValue);
         }
         float delta = maxValue - minValue;
-        // copy each value from float array to RGB channels
-        for (int i = 0; i < width* height; i++) {
-            int r = (int)((floatArray[i] - minValue) / delta * 255.);
-            int g = (int)((floatArray[i+width*height] - minValue) / delta * 255.);
-            int b =(int)((floatArray[i+2*width*height] - minValue) / delta * 255.);
-            r = Math.min(Math.max(r, 0), 255);
-            g = Math.min(Math.max(g, 0), 255);
-            b = Math.min(Math.max(b, 0), 255);
-            pixels[i] = rgb(r, g, b); // you might need to import for rgb()
+
+        for (int idx = 0; idx < floatArray.length; idx++) {
+            floatArray[idx] = (float) ((floatArray[idx] - minValue) / delta * 255.);
         }
+        for (int i = 0; i < width * height; i++) {
+            int r = (int) (floatArray[i]);
+            int g = (int) (floatArray[i + width * height]);
+            int b = (int) (floatArray[i + 2 * width * height]);
+            pixels[i] = rgb(r, g, b);
+        }
+
+        // TODO benchmark
+        // copy each value from float array to RGB channels
+//        for (int i = 0; i < width * height; i++) {
+//            int r = (int) ((floatArray[i] - minValue) / delta * 255.);
+//            int g = (int) ((floatArray[i + width * height] - minValue) / delta * 255.);
+//            int b = (int) ((floatArray[i + 2 * width * height] - minValue) / delta * 255.);
+//            r = Math.min(Math.max(r, 0), 255);
+//            g = Math.min(Math.max(g, 0), 255);
+//            b = Math.min(Math.max(b, 0), 255);
+//            pixels[i] = rgb(r, g, b); // you might need to import for rgb()
+//        }
+        // TODO process all the frames in the batch in one go
         bmp.setPixels(pixels, 0, width, 0, 0, width, height);
 
         return bmp;
@@ -143,88 +210,84 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
         final Tensor inputTensor = TensorImageUtils.bitmapToFloat32Tensor(buf,
                 TensorImageUtils.TORCHVISION_NORM_MEAN_RGB, TensorImageUtils.TORCHVISION_NORM_STD_RGB);
         final float[] outimgTensor = mModule.forward(IValue.from(inputTensor)).toTensor().getDataAsFloatArray();
-        Bitmap tmp = floatArrayToBitmap(outimgTensor, buf.getWidth(),buf.getHeight());
-        return tmp;
+        return floatArrayToBitmap(outimgTensor, buf.getWidth(), buf.getHeight());
+    }
+
+    @Override
+    @WorkerThread
+    protected void offloadImage(ImageProxy image, int rotationDegrees) {
+        if (SystemClock.elapsedRealtime() - mLastAnalysisResultTime < INPUT_MIN_DELAY) {
+            return;
+        }
+        if (inputImageQueue.size() < INPUT_QUEUE_SIZE) {
+            mLastAnalysisResultTime = SystemClock.elapsedRealtime();
+            Bitmap bitmap = imgToBitmap(image.getImage());
+            Matrix matrix = new Matrix();
+            matrix.postRotate(90.0f);
+            bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+            bitmap = Bitmap.createScaledBitmap(bitmap, models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight, true);
+
+            TensorImageUtils.bitmapToFloatBuffer(bitmap, 0, 0,
+                    models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight,
+                    Constants.MEAN_RGB, Constants.STD_RGB, inTensorBuffer,
+                    (models.get(model_idx_used).framesPerInterference - 1) * mFrameCount.get() *
+                            models.get(model_idx_used).resolutionHeight *
+                            models.get(model_idx_used).resolutionWidth);
+
+            mFrameCount.getAndIncrement();
+            if (mFrameCount.get() < models.get(model_idx_used).framesPerInterference) {
+                return;
+            }
+            mFrameCount.set(0);
+
+            inputImageQueue.offer(new InputImageData(inTensorBuffer));
+        }
+
     }
 
     @Override
     @WorkerThread
     protected void analyzeImage() {
         if (model_idx != model_idx_used) {
+            model_idx_used = model_idx;
             mModule.destroy();
             try {
-                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), model_names.get(model_idx)), null, Device.CPU);
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), models.get(model_idx_used).fileName), null, Device.CPU);
             } catch (IOException e) {
-
+                Log.e("Object Detection", "Error on loading new model", e);
             }
-            model_idx_used = model_idx;
+            inputImageQueue.clear();
+            mFrameCount.set(0);
+            inTensorBuffer = Tensor.allocateFloatBuffer(models.get(model_idx_used).getInputSize());
+            DISPLAY_MIN_DELAY = models.get(model_idx_used).displayDelay;
+            INPUT_MIN_DELAY = models.get(model_idx_used).inputDelay;
         }
-
-//        if (mFrameCount == 0)
-//            inTensorBuffer = Tensor.allocateFloatBuffer(Constants.MODEL_INPUT_SIZE);
-
-        Bitmap bitmap = null;
+        FloatBuffer tensorBuffer = null;
         try {
-            bitmap = inputImageQueue.take().bitmap;
+            tensorBuffer = inputImageQueue.take().inTensorBuffer;
         } catch (InterruptedException e) {
             Log.e("Object Detection", "Error on retrieving input image from queue", e);
         }
-        Matrix matrix = new Matrix();
-        matrix.postRotate(90.0f);
-        bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-
-//        float ratio = Math.min(bitmap.getWidth(), bitmap.getHeight()) / 160.0f;
-//        Bitmap resizedBitmap = Bitmap.createScaledBitmap(bitmap, (int)(bitmap.getWidth() / ratio), (int)(bitmap.getHeight() / ratio), true);
-//        Bitmap centerCroppedBitmap = Bitmap.createBitmap(resizedBitmap,
-//                resizedBitmap.getWidth() > resizedBitmap.getHeight() ? (resizedBitmap.getWidth() - resizedBitmap.getHeight()) / 2 : 0,
-//                resizedBitmap.getHeight() > resizedBitmap.getWidth() ? (resizedBitmap.getHeight() - resizedBitmap.getWidth()) / 2 : 0,
-//                Constants.TARGET_VIDEO_SIZE, Constants.TARGET_VIDEO_SIZE);
-//
-//        TensorImageUtils.bitmapToFloatBuffer(centerCroppedBitmap, 0, 0,
-//                Constants.TARGET_VIDEO_SIZE, Constants.TARGET_VIDEO_SIZE, Constants.MEAN_RGB, Constants.STD_RGB, inTensorBuffer,
-//                (Constants.COUNT_OF_FRAMES_PER_INFERENCE - 1) * mFrameCount * Constants.TARGET_VIDEO_SIZE * Constants.TARGET_VIDEO_SIZE);
-//
-//        mFrameCount++;
-//        if (mFrameCount < 4) {
-//            return null;
-//        }
-//
-//        mFrameCount = 0;
-//        Tensor inputTensor = Tensor.fromBlob(inTensorBuffer, new long[]{1, 3, Constants.COUNT_OF_FRAMES_PER_INFERENCE, 160, 160});
-//
-//        final long startTime = SystemClock.elapsedRealtime();
-//        Tensor outputTensor = mModule.forward(IValue.from(inputTensor)).toTensor();
-//        final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
-//
-//        final float[] scores = outputTensor.getDataAsFloatArray();
-//        Integer scoresIdx[] = new Integer[scores.length];
-//        for (int i = 0; i < scores.length; i++)
-//            scoresIdx[i] = i;
-//
-//        Arrays.sort(scoresIdx, new Comparator<Integer>() {
-//            @Override public int compare(final Integer o1, final Integer o2) {
-//                return Float.compare(scores[o2], scores[o1]);
-//            }
-//        });
-//
-//        String tops[] = new String[Constants.TOP_COUNT];
-//
-//        final String result = String.join(", ", tops);
-        bitmap = Bitmap.createScaledBitmap(bitmap, (int)(128), (int)(128), true);
         final long startTime = SystemClock.elapsedRealtime();
-        bitmap = Model_forward(bitmap);
-        final Bitmap transferredBitmap = Bitmap.createScaledBitmap(bitmap, 512, 512, true);
-        final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
-//        runOnUiThread(new Runnable() {
-//            @Override
-//            public void run() {
-//                to_wait = false;
-//                mImageView.setImageBitmap(transferredBitmap);
-//                mTextView.setText(str_1);
-//            }
-//        });
 
-        outputImageQueue.offer(new AnalysisResult(transferredBitmap, inferenceTime));
+        Tensor inputTensor = Tensor.fromBlob(tensorBuffer, new long[]{
+                1,
+                (long) Constants.CHANNEL_NUM * models.get(model_idx_used).framesPerInterference,
+                models.get(model_idx_used).resolutionWidth,
+                models.get(model_idx_used).resolutionHeight
+        });
+
+        final float[] outimgTensor = mModule.forward(IValue.from(inputTensor)).toTensor().getDataAsFloatArray();
+        for (int counter = 0; counter < models.get(model_idx_used).framesPerInterference; counter++) {
+            final float[] frame = Arrays.copyOfRange(outimgTensor,
+                    models.get(model_idx_used).getFrameSize() * counter,
+                    models.get(model_idx_used).getFrameSize() * (counter + 1));
+            final Bitmap tmp = floatArrayToBitmap(frame, models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight);
+            final Bitmap transferredBitmap = Bitmap.createScaledBitmap(tmp, 512, 512, true);
+            final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
+            outputImageQueue.offer(new AnalysisResult(transferredBitmap, inferenceTime));
+        }
+
         return;
     }
 }
