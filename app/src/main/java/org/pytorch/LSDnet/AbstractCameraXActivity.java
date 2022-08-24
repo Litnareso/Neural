@@ -3,11 +3,6 @@ package org.pytorch.LSDnet;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.ImageFormat;
-import android.graphics.Rect;
-import android.graphics.YuvImage;
-import android.media.Image;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.Size;
@@ -24,8 +19,7 @@ import androidx.camera.core.Preview;
 import androidx.camera.core.PreviewConfig;
 import androidx.core.app.ActivityCompat;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -40,12 +34,10 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     protected static final int DISPLAY_QUEUE_SIZE = 9;
 
     static class InputImageData {
-        protected final Bitmap bitmap;
-        private final int rotationDegrees;
+        protected final FloatBuffer inTensorBuffer;
 
-        InputImageData(Bitmap bitmap, int rotationDegrees) {
-            this.bitmap = bitmap;
-            this.rotationDegrees = rotationDegrees;
+        InputImageData(FloatBuffer inTensorBuffer) {
+            this.inTensorBuffer = inTensorBuffer;
         }
     }
 

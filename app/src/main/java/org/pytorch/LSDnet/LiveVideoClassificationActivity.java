@@ -34,7 +34,7 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Stream;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.pytorch.Device;
 
@@ -49,7 +49,7 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     );
     private ImageView mResultView;
     private TextView mFPSView;
-    private int mFrameCount = 0;
+    private final AtomicInteger mFrameCount = new AtomicInteger();
     private FloatBuffer inTensorBuffer;
 
     private long mLastAnalysisResultTime = 0;
@@ -227,8 +227,22 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
             bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
             bitmap = Bitmap.createScaledBitmap(bitmap, models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight, true);
 
-            inputImageQueue.offer(new InputImageData(bitmap, rotationDegrees));
+            TensorImageUtils.bitmapToFloatBuffer(bitmap, 0, 0,
+                    models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight,
+                    Constants.MEAN_RGB, Constants.STD_RGB, inTensorBuffer,
+                    (models.get(model_idx_used).framesPerInterference - 1) * mFrameCount.get() *
+                            models.get(model_idx_used).resolutionHeight *
+                            models.get(model_idx_used).resolutionWidth);
+
+            mFrameCount.getAndIncrement();
+            if (mFrameCount.get() < models.get(model_idx_used).framesPerInterference) {
+                return;
+            }
+            mFrameCount.set(0);
+
+            inputImageQueue.offer(new InputImageData(inTensorBuffer));
         }
+
     }
 
     @Override
@@ -243,54 +257,32 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
                 Log.e("Object Detection", "Error on loading new model", e);
             }
             inputImageQueue.clear();
-            mFrameCount = 0;
+            mFrameCount.set(0);
             inTensorBuffer = Tensor.allocateFloatBuffer(models.get(model_idx_used).getInputSize());
             DISPLAY_MIN_DELAY = models.get(model_idx_used).displayDelay;
             INPUT_MIN_DELAY = models.get(model_idx_used).inputDelay;
         }
-
-        Bitmap bitmap = null;
+        FloatBuffer tensorBuffer = null;
         try {
-            bitmap = inputImageQueue.take().bitmap;
+            tensorBuffer = inputImageQueue.take().inTensorBuffer;
         } catch (InterruptedException e) {
             Log.e("Object Detection", "Error on retrieving input image from queue", e);
         }
         final long startTime = SystemClock.elapsedRealtime();
-//        Matrix matrix = new Matrix();
-//        matrix.postRotate(90.0f);
-//        bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-//
-//
-//        bitmap = Bitmap.createScaledBitmap(bitmap, models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight, true);
 
-
-        TensorImageUtils.bitmapToFloatBuffer(bitmap, 0, 0,
-                models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight,
-                Constants.MEAN_RGB, Constants.STD_RGB, inTensorBuffer,
-                (models.get(model_idx_used).framesPerInterference - 1) * mFrameCount *
-                        models.get(model_idx_used).resolutionHeight *
-                        models.get(model_idx_used).resolutionWidth);
-
-        mFrameCount++;
-        if (mFrameCount < models.get(model_idx_used).framesPerInterference) {
-            return;
-        }
-        mFrameCount = 0;
-
-        Tensor inputTensor = Tensor.fromBlob(inTensorBuffer, new long[]{
+        Tensor inputTensor = Tensor.fromBlob(tensorBuffer, new long[]{
                 1,
                 (long) Constants.CHANNEL_NUM * models.get(model_idx_used).framesPerInterference,
                 models.get(model_idx_used).resolutionWidth,
                 models.get(model_idx_used).resolutionHeight
         });
 
-//        final long startTime = SystemClock.elapsedRealtime();
         final float[] outimgTensor = mModule.forward(IValue.from(inputTensor)).toTensor().getDataAsFloatArray();
         for (int counter = 0; counter < models.get(model_idx_used).framesPerInterference; counter++) {
             final float[] frame = Arrays.copyOfRange(outimgTensor,
                     models.get(model_idx_used).getFrameSize() * counter,
                     models.get(model_idx_used).getFrameSize() * (counter + 1));
-            final Bitmap tmp = floatArrayToBitmap(frame, bitmap.getWidth(), bitmap.getHeight());
+            final Bitmap tmp = floatArrayToBitmap(frame, models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight);
             final Bitmap transferredBitmap = Bitmap.createScaledBitmap(tmp, 512, 512, true);
             final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
             outputImageQueue.offer(new AnalysisResult(transferredBitmap, inferenceTime));
