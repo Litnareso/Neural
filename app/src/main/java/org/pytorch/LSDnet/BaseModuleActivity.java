@@ -30,7 +30,7 @@ public class BaseModuleActivity extends AppCompatActivity {
     @Override
     protected void onPostCreate(@Nullable Bundle savedInstanceState) {
         super.onPostCreate(savedInstanceState);
-        mProcessingThreadPool = Executors.newSingleThreadExecutor();
+        mProcessingThreadPool = Executors.newFixedThreadPool(1);
         mDisplayThreadPool = Executors.newSingleThreadScheduledExecutor();
         startBackgroundThread();
     }
