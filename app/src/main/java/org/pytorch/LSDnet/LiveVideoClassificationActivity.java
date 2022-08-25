@@ -2,6 +2,8 @@ package org.pytorch.LSDnet;
 
 import static android.graphics.Color.rgb;
 
+import static org.pytorch.LSDnet.Constants.RUNNING_MEAN_BUF_SIZE;
+
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
@@ -34,7 +36,9 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.pytorch.Device;
 
@@ -51,6 +55,8 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     private TextView mFPSView;
     private final AtomicInteger mFrameCount = new AtomicInteger();
     private FloatBuffer inTensorBuffer;
+
+    private RunningMean runningMeanQueue;
 
     private long mLastAnalysisResultTime = 0;
 
@@ -87,6 +93,31 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
         public AnalysisResult(Bitmap bitmap, long inferenceTime) {
             this.bitmap = bitmap;
             this.inferenceTime = inferenceTime;
+        }
+    }
+
+    static class RunningMean {
+        private final LinkedBlockingQueue<Long> window = new LinkedBlockingQueue<Long>(RUNNING_MEAN_BUF_SIZE);
+        private final AtomicLong mean = new AtomicLong();
+
+        public RunningMean(long estimatedTimeMS) {
+            for (int i = 0; i < RUNNING_MEAN_BUF_SIZE; ++i) {
+                window.add(estimatedTimeMS);
+            }
+            mean.set(estimatedTimeMS);
+        }
+
+        public void updateMean(long newVal) {
+            try {
+                mean.addAndGet((newVal - window.take()) / RUNNING_MEAN_BUF_SIZE);
+                window.offer(newVal);
+            } catch (InterruptedException e) {
+                Log.e("Object Detection", "Error on updating running mean", e);
+            }
+        }
+
+        public long getMean() {
+            return mean.get();
         }
     }
 
@@ -219,6 +250,10 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
         if (SystemClock.elapsedRealtime() - mLastAnalysisResultTime < INPUT_MIN_DELAY) {
             return;
         }
+        // TODO for testing
+//        Log.d("Object Detection", String.format("INPUT_MIN_DELAY: %dms", INPUT_MIN_DELAY));
+//        Log.d("Object Detection", String.format("input queue size: %d", inputImageQueue.size()));
+//        Log.d("Object Detection", String.format("output queue size: %d", outputImageQueue.size()));
         if (inputImageQueue.size() < INPUT_QUEUE_SIZE) {
             mLastAnalysisResultTime = SystemClock.elapsedRealtime();
             Bitmap bitmap = imgToBitmap(image.getImage());
@@ -249,6 +284,7 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     @WorkerThread
     protected void analyzeImage() {
         if (model_idx != model_idx_used) {
+            // TODO only one thread
             model_idx_used = model_idx;
             mModule.destroy();
             try {
@@ -261,6 +297,7 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
             inTensorBuffer = Tensor.allocateFloatBuffer(models.get(model_idx_used).getInputSize());
             DISPLAY_MIN_DELAY = models.get(model_idx_used).displayDelay;
             INPUT_MIN_DELAY = models.get(model_idx_used).inputDelay;
+            runningMeanQueue = new RunningMean(INPUT_MIN_DELAY * models.get(model_idx_used).framesPerInterference);
         }
         FloatBuffer tensorBuffer = null;
         try {
@@ -287,6 +324,12 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
             final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
             outputImageQueue.offer(new AnalysisResult(transferredBitmap, inferenceTime));
         }
+
+        final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
+
+        runningMeanQueue.updateMean(inferenceTime);
+        DISPLAY_MIN_DELAY = runningMeanQueue.getMean() / models.get(model_idx_used).framesPerInterference;
+        INPUT_MIN_DELAY = runningMeanQueue.getMean() / models.get(model_idx_used).framesPerInterference;
 
         return;
     }

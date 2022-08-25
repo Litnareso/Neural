@@ -9,4 +9,6 @@ public final class Constants {
     public final static int TARGET_VIDEO_SIZE = 128;
     public final static int MODEL_INPUT_SIZE = COUNT_OF_FRAMES_PER_INFERENCE * 3 * TARGET_VIDEO_SIZE * TARGET_VIDEO_SIZE;
     public final static int TOP_COUNT = 3;
+
+    public final static int RUNNING_MEAN_BUF_SIZE = 10;
 }
