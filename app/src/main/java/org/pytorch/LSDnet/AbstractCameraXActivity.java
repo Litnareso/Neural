@@ -27,11 +27,11 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     private static final int REQUEST_CODE_CAMERA_PERMISSION = 200;
     private static final String[] PERMISSIONS = {Manifest.permission.CAMERA};
 
-    protected static long INPUT_MIN_DELAY = 50;
-    protected static long DISPLAY_MIN_DELAY = 40;
-    protected static long START_DELAY = 50;
-    protected static final int INPUT_QUEUE_SIZE = 9;
-    protected static final int DISPLAY_QUEUE_SIZE = 9;
+    protected volatile long INPUT_MIN_DELAY = 50;
+    protected volatile long DISPLAY_MIN_DELAY = 40;
+    protected volatile long START_DELAY = 50;
+    protected static final int INPUT_QUEUE_SIZE = 3;
+    protected static final int DISPLAY_QUEUE_SIZE = 3;
 
     static class InputImageData {
         protected final FloatBuffer inTensorBuffer;
