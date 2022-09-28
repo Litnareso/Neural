@@ -363,7 +363,7 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
                     models.get(model_idx_used).getFrameSize() * counter,
                     models.get(model_idx_used).getFrameSize() * (counter + 1));
             final Bitmap tmp = floatArrayToBitmap(frame, models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight);
-            final Bitmap transferredBitmap = Bitmap.createScaledBitmap(tmp, 512, 512, true);
+            final Bitmap transferredBitmap = Bitmap.createScaledBitmap(tmp, 480, 640, true);
             final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
             outputImageQueue.offer(new AnalysisResult(transferredBitmap, inferenceTime, frameNum + counter));
         }
