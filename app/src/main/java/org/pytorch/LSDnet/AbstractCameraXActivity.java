@@ -4,7 +4,7 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.os.Bundle;
-import android.util.Log;
+import android.os.Process;
 import android.util.Size;
 import android.view.TextureView;
 import android.widget.Toast;
@@ -20,7 +20,6 @@ import androidx.camera.core.PreviewConfig;
 import androidx.core.app.ActivityCompat;
 
 import java.nio.FloatBuffer;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
@@ -31,18 +30,19 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     protected volatile long DISPLAY_MIN_DELAY = 40;
     protected volatile long START_DELAY = 50;
     protected static final int INPUT_QUEUE_SIZE = 3;
-    protected static final int DISPLAY_QUEUE_SIZE = 3;
+    protected static final int DISPLAY_QUEUE_SIZE = 6;
+    protected static final int MAX_ADD_DELAY = 40;
 
     static class InputImageData {
         protected final FloatBuffer inTensorBuffer;
+        protected final int frameNum;
 
-        InputImageData(FloatBuffer inTensorBuffer) {
+        InputImageData(FloatBuffer inTensorBuffer, int frameNum) {
             this.inTensorBuffer = inTensorBuffer;
+            this.frameNum = frameNum;
         }
     }
 
-    protected LinkedBlockingQueue<InputImageData> inputImageQueue;
-    protected LinkedBlockingQueue<R> outputImageQueue;
     private Bitmap buffer = null;
 
     protected abstract int getContentViewLayoutId();
@@ -54,9 +54,6 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(getContentViewLayoutId());
-
-        inputImageQueue = new LinkedBlockingQueue<InputImageData>(INPUT_QUEUE_SIZE);
-        outputImageQueue = new LinkedBlockingQueue<R>(DISPLAY_QUEUE_SIZE);
 
         startBackgroundThread();
 
@@ -115,6 +112,8 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     private Runnable mAnalazeImage = new Runnable() {
         @Override
         public void run() {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_VIDEO);
+
             while (true) {
                 analyzeImage();
             }
@@ -124,13 +123,8 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     private Runnable mDisplayImage = new Runnable() {
         @Override
         public void run() {
-            try {
-                final R result = outputImageQueue.take();
-                runOnUiThread(() -> applyToUiAnalyzeImageResult(result));
+                while (!applyToUiAnalyzeImageResult()) {};
                 mDisplayThreadPool.schedule(mDisplayImage, DISPLAY_MIN_DELAY, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                Log.e("Object Detection", "Error on retrieving output image from queue", e);
-            }
         }
     };
 
@@ -141,5 +135,5 @@ public abstract class AbstractCameraXActivity<R> extends BaseModuleActivity {
     protected abstract void analyzeImage();
 
     @UiThread
-    protected abstract void applyToUiAnalyzeImageResult(R result);
+    protected abstract boolean applyToUiAnalyzeImageResult();
 }

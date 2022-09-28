@@ -35,8 +35,10 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -47,18 +49,23 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     volatile int model_idx = 0;
     volatile int model_idx_used = -1;
     List<ProcessingModel> models = Arrays.asList(
-            new ProcessingModel("model.ptl", 1, 128, 128, 50, 40),
+            new ProcessingModel("model.ptl", 1, 256, 256, 50, 40),
             new ProcessingModel("model_1.ptl", 1, 128, 128, 40, 30),
             new ProcessingModel("model_3.ptl", 3, 128, 128, 25, 25)
     );
     private ImageView mResultView;
     private TextView mFPSView;
-    private final AtomicInteger mFrameCount = new AtomicInteger();
+    private final AtomicInteger mFrameCount = new AtomicInteger(0);
     private FloatBuffer inTensorBuffer;
+
+    protected LinkedBlockingQueue<InputImageData> inputImageQueue;
+    protected PriorityBlockingQueue<AnalysisResult> outputImageQueue;
 
     private RunningMean runningMeanQueue;
 
     private long mLastAnalysisResultTime = 0;
+    private final AtomicInteger frameCounter = new AtomicInteger(0);
+    private final AtomicInteger currentFrame = new AtomicInteger(0);
 
     static class ProcessingModel {
         private final String fileName;
@@ -89,10 +96,20 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     static class AnalysisResult {
         private final Bitmap bitmap;
         private final long inferenceTime;
+        private final int frameNum;
 
-        public AnalysisResult(Bitmap bitmap, long inferenceTime) {
+        public AnalysisResult(Bitmap bitmap, long inferenceTime, int frameNum) {
             this.bitmap = bitmap;
             this.inferenceTime = inferenceTime;
+            this.frameNum = frameNum;
+        }
+
+    }
+
+    public class AnalysisResultComparator implements Comparator<AnalysisResult> {
+        @Override
+        public int compare(AnalysisResult ar1, AnalysisResult ar2) {
+            return ar1.frameNum - ar2.frameNum;
         }
     }
 
@@ -170,6 +187,10 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
                 model_idx = (model_idx + 1) % models.size();
             }
         });
+
+        Comparator<AnalysisResult> comparator = new AnalysisResultComparator();
+        inputImageQueue = new LinkedBlockingQueue<InputImageData>(INPUT_QUEUE_SIZE);
+        outputImageQueue = new PriorityBlockingQueue<AnalysisResult>(DISPLAY_QUEUE_SIZE, comparator);
     }
 
     @Override
@@ -182,15 +203,27 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     }
 
     @Override
-    protected void applyToUiAnalyzeImageResult(AnalysisResult result) {
-        final String str_1 = String.format("Time: %dms", result.inferenceTime);
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                mResultView.setImageBitmap(result.bitmap);
-                mFPSView.setText(str_1);
+    protected boolean applyToUiAnalyzeImageResult() {
+        try {
+            final AnalysisResult result = outputImageQueue.take();
+            if (result.frameNum < currentFrame.get()) {
+                Log.w("Object Detection", "Frame dropped");
+                return false;
             }
-        });
+            currentFrame.set(result.frameNum);
+            final String str_1 = String.format("Model: %s, Time: %dms", models.get(model_idx_used).fileName, result.inferenceTime);
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    mResultView.setImageBitmap(result.bitmap);
+                    mFPSView.setText(str_1);
+                }
+            });
+            return true;
+        } catch (InterruptedException e) {
+            Log.e("Object Detection", "Error on displaying output image", e);
+            return false;
+        }
 //        mResultView.setText(result.);
 //        // TODO
 //        mResultView.invalidate();
@@ -275,7 +308,7 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
             }
             mFrameCount.set(0);
 
-            inputImageQueue.offer(new InputImageData(inTensorBuffer));
+            inputImageQueue.offer(new InputImageData(inTensorBuffer, frameCounter.getAndAdd(models.get(model_idx_used).framesPerInterference)));
         }
 
     }
@@ -292,16 +325,21 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
             } catch (IOException e) {
                 Log.e("Object Detection", "Error on loading new model", e);
             }
+            frameCounter.set(0);
             inputImageQueue.clear();
             mFrameCount.set(0);
+            currentFrame.set(0);
             inTensorBuffer = Tensor.allocateFloatBuffer(models.get(model_idx_used).getInputSize());
             DISPLAY_MIN_DELAY = models.get(model_idx_used).displayDelay;
             INPUT_MIN_DELAY = models.get(model_idx_used).inputDelay;
             runningMeanQueue = new RunningMean(INPUT_MIN_DELAY * models.get(model_idx_used).framesPerInterference);
         }
         FloatBuffer tensorBuffer = null;
+        int frameNum = 0;
         try {
-            tensorBuffer = inputImageQueue.take().inTensorBuffer;
+            InputImageData data = inputImageQueue.take();
+            tensorBuffer = data.inTensorBuffer;
+            frameNum = data.frameNum;
         } catch (InterruptedException e) {
             Log.e("Object Detection", "Error on retrieving input image from queue", e);
         }
@@ -322,10 +360,13 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
             final Bitmap tmp = floatArrayToBitmap(frame, models.get(model_idx_used).resolutionWidth, models.get(model_idx_used).resolutionHeight);
             final Bitmap transferredBitmap = Bitmap.createScaledBitmap(tmp, 512, 512, true);
             final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
-            outputImageQueue.offer(new AnalysisResult(transferredBitmap, inferenceTime));
+            outputImageQueue.offer(new AnalysisResult(transferredBitmap, inferenceTime, frameNum + counter));
         }
 
         final long inferenceTime = SystemClock.elapsedRealtime() - startTime;
+
+//        Log.d("Object Detection", String.format("Inference Time: %dms", inferenceTime));
+//        Log.d("Object Detection", "threadname: " + Thread.currentThread().getName());
 
         runningMeanQueue.updateMean(inferenceTime);
         DISPLAY_MIN_DELAY = runningMeanQueue.getMean() / models.get(model_idx_used).framesPerInterference;
