@@ -50,6 +50,11 @@ public class LiveVideoClassificationActivity extends AbstractCameraXActivity<Liv
     volatile int model_idx_used = -1;
     List<ProcessingModel> models = Arrays.asList(
             new ProcessingModel("model.ptl", 1, 256, 256, 50, 40),
+            new ProcessingModel("1frames_d_8.ptl", 1, 256, 256, 50, 40),
+            new ProcessingModel("1frames_s_8.ptl", 1, 256, 256, 50, 40),
+            new ProcessingModel("1frames_s_24.ptl", 1, 256, 256, 50, 40),
+            new ProcessingModel("1frames_w_8.ptl", 1, 256, 256, 50, 40),
+            new ProcessingModel("3frames_s_24.ptl", 3, 256, 256, 50, 40),
             new ProcessingModel("model_1.ptl", 1, 128, 128, 40, 30),
             new ProcessingModel("model_3.ptl", 3, 128, 128, 25, 25)
     );
