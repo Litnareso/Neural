@@ -1,3 +1,9 @@
+// Copyright (c) 2020 Facebook, Inc. and its affiliates.
+// Copyright (c) 2022 Maksim Siniukov and Evgenii Demidovich
+// All rights reserved.
+//
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree.
 
 package org.pytorch.LSDnet;
 
