@@ -1,43 +1,37 @@
 package org.pytorch.LSDnet;
 import static android.graphics.Color.rgb;
 
+import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
-import android.util.Log;
-import android.util.Pair;
 import android.view.View;
-import android.widget.Button;
 import android.widget.TextView;
-import android.widget.VideoView;
 import android.widget.ImageView;
 import android.widget.ImageButton;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
+import org.pytorch.Device;
 import org.pytorch.IValue;
 import org.pytorch.LiteModuleLoader;
 import org.pytorch.Module;
-import org.pytorch.PyTorchAndroid;
 import org.pytorch.Tensor;
 import org.pytorch.torchvision.TensorImageUtils;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.nio.Buffer;
-import java.nio.FloatBuffer;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 
 
@@ -103,29 +97,50 @@ public class MainActivity extends AppCompatActivity implements Runnable {
     private Bitmap buf;
     Uri mVideoUri;
     private MediaMetadataRetriever mmr = null;
-    private Module model_enhancer = null;
+    private Module mModule = null;
     private int state = 0;
-    private Bitmap Model_forward(Bitmap buf) {
+    List<String> model_names = Arrays.asList("model.ptl");
+    int model_idx = 0;
+    int model_idx_used = 0;
+    Bitmap Model_forward(Bitmap buf) {
         final Tensor inputTensor = TensorImageUtils.bitmapToFloat32Tensor(buf,
                 TensorImageUtils.TORCHVISION_NORM_MEAN_RGB, TensorImageUtils.TORCHVISION_NORM_STD_RGB);
-        final float[] outimgTensor = model_enhancer.forward(IValue.from(inputTensor)).toTensor().getDataAsFloatArray();
+        if (model_idx != model_idx_used) {
+            mModule.destroy();
+            try {
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), model_names.get(model_idx)), null, Device.CPU);
+            } catch (IOException e) {
+
+            }
+            model_idx_used = model_idx;
+        }
+        final float[] outimgTensor = mModule.forward(IValue.from(inputTensor)).toTensor().getDataAsFloatArray();
         Bitmap tmp = floatArrayToBitmap(outimgTensor, buf.getWidth(),buf.getHeight());
         return tmp;
     }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 1);
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, 1);
+        }
+
         setContentView(R.layout.activity_main);
-        if (model_enhancer == null) {
+        if (mModule == null) {
             try {
-                model_enhancer = LiteModuleLoader.load(MainActivity.assetFilePath(getApplicationContext(), "model.ptl"));
+                mModule = LiteModuleLoader.load(MainActivity.assetFilePath(this.getApplicationContext(), "model.ptl"), null, Device.CPU);
             } catch (IOException e) {
             }
         }
         if (buf == null) {
             try {
                 buf = BitmapFactory.decodeStream(getAssets().open(mImagename));
-
             } catch (IOException e) {
 
             }
@@ -134,6 +149,7 @@ public class MainActivity extends AppCompatActivity implements Runnable {
         mImageView = findViewById(R.id.imageView);
         Bitmap tmp = Model_forward(buf);
         mImageView.setImageBitmap(tmp);
+
         final ImageButton buttonSelect = findViewById(R.id.gallerybutton);
         buttonSelect.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
@@ -142,6 +158,26 @@ public class MainActivity extends AppCompatActivity implements Runnable {
                 startActivityForResult(pickIntent, 1);
             }
         });
+
+        final ImageButton buttonCamera = findViewById(R.id.camerabutton);
+        buttonCamera.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                final Intent intent = new Intent(MainActivity.this, LiveVideoClassificationActivity.class);
+                startActivity(intent);
+            }
+        });
+
+        final ImageButton buttonswitch = findViewById(R.id.nextbutton);
+
+        buttonswitch.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                //final Intent intent = new Intent(MainActivity.this, LiveVideoClassificationActivity.class);
+                //startActivity(intent);
+                model_idx += 1;
+                model_idx = model_idx %  model_names.size();
+            }
+        });
+
     }
 
     @Override
